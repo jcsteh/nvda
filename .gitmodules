@@ -21,3 +21,6 @@
 [submodule "include/scons"]
 	path = include/scons
 	url = https://github.com/SConsProject/scons
+[submodule "include/ia2"]
+	path = include/ia2
+	url = http://git.linuxfoundation.org/a11y/ia2.git
