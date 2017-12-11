@@ -10,6 +10,7 @@ This is now used by other applications as well.
 
 import itertools
 from comtypes import COMError
+from comtypes.hresult import E_NOTIMPL
 import winUser
 import textInfos
 import controlTypes
@@ -18,6 +19,7 @@ import api
 from NVDAObjects import NVDAObject, NVDAObjectTextInfo
 from . import IA2TextTextInfo, IAccessible
 from compoundDocuments import CompoundTextInfo
+import NVDAObjects.IAccessible
 
 class FakeEmbeddingTextInfo(textInfos.offsets.OffsetsTextInfo):
 
@@ -184,6 +186,41 @@ class MozillaCompoundTextInfo(CompoundTextInfo):
 			pass
 		return None
 
+	def _maybeGetAccessibleWithCaret(self, obj):
+		"""Use IAccessible2_2::accessibleWithCaret to retrieve the caret object directly if supported.
+		"""
+		if getattr(self, "_supportsAccessibleWithCaret", None) is False:
+			# We already know it's not supported, so don't bother trying.
+			return None, None
+		try:
+			origIa = obj.IAccessibleObject.QueryInterface(IAccessibleHandler.IAccessible2_2)
+		except COMError as e:
+			log.debugWarning("Couldn't QI to IAccessible2_2: %s" % e)
+			self._supportsAccessibleWithCaret = False
+			return None, None
+		try:
+			caretUnk, offset = origIa.accessibleWithCaret
+		except COMError as e:
+			if e.hresult == E_NOTIMPL:
+				log.debugWarning("accessibleWithCaret not implemented")
+				self._supportsAccessibleWithCaret = False
+				return None, None
+			else:
+				raise
+		if not caretUnk:
+			raise LookupError("No caret")
+		caretIa = caretUnk.QueryInterface(IAccessibleHandler.IAccessible2)
+		if caretIa == obj.IAccessibleObject:
+			caretObj = obj
+		else:
+			caretObj = NVDAObjects.IAccessible.IAccessible(
+				windowHandle=obj.windowHandle, IAccessibleObject=caretIa)
+		# optimisation: Passing an Offsets position checks nCharacters, which is an extra call we don't need.
+		ti = self._makeRawTextInfo(caretObj, textInfos.POSITION_FIRST)
+		ti._startOffset = ti._endOffset = offset
+		self._supportsAccessibleWithCaret = True
+		return ti, caretObj
+
 	POSITION_SELECTION_START = 3
 	POSITION_SELECTION_END = 4
 	FINDCONTENTDESCENDANT_POSITIONS = {
@@ -192,9 +229,12 @@ class MozillaCompoundTextInfo(CompoundTextInfo):
 		textInfos.POSITION_LAST: 2,
 	}
 	def _findContentDescendant(self, obj, position):
+		if position == textInfos.POSITION_CARET:
+			caretTi, caretObj = self._maybeGetAccessibleWithCaret(obj)
+			if caretTi:
+				return caretTi, caretObj
 		import ctypes
 		import NVDAHelper
-		import NVDAObjects.IAccessible
 		descendantID=ctypes.c_int()
 		descendantOffset=ctypes.c_int()
 		what = self.FINDCONTENTDESCENDANT_POSITIONS.get(position, position)
