@@ -21,6 +21,7 @@ http://www.gnu.org/licenses/old-licenses/gpl-2.0.html
 #include "nvdaController.h"
 #include <common/ia2utils.h>
 #include "nvdaHelperRemote.h"
+#include <common/log.h>
 
 using namespace std;
 
@@ -261,6 +262,15 @@ void CALLBACK winEventProcHook(HWINEVENTHOOK hookID, DWORD eventID, HWND hwnd, l
 		case IA2_EVENT_TEXT_INSERTED:
 		break;
 		default:
+		return;
+	}
+	// Mozilla provides a window property which enables us to determine whether
+	// an event is for a live region without needing to call
+	// AccessibleObjectFromEvent, which might save a cross-process call.
+	static const wchar_t* PROP_MOZ_WIN_EVENT_FLAGS = L"MozillaWinEventFlags";
+	static const uint32_t MOZ_WINEVT_NOT_LIVE_REGION = 1 << 0;
+	auto mozEvtFlags = HandleToUlong(GetPropW(hwnd, PROP_MOZ_WIN_EVENT_FLAGS));
+	if (mozEvtFlags & MOZ_WINEVT_NOT_LIVE_REGION) {
 		return;
 	}
 	IAccessible* pacc=NULL;
